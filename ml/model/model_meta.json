@@ -1,0 +1,32 @@
+{
+  "feature_cols": [
+    "savings_ratio",
+    "emi_ratio",
+    "expense_volatility",
+    "spending_trend_slope",
+    "income_irregularity_score",
+    "expense_to_income_ratio"
+  ],
+  "label_map": {
+    "LOW": 0,
+    "MEDIUM": 1,
+    "HIGH": 2
+  },
+  "label_inv": {
+    "0": "LOW",
+    "1": "MEDIUM",
+    "2": "HIGH"
+  },
+  "feature_importances": {
+    "savings_ratio": 0.026011386904037686,
+    "emi_ratio": 0.007498628537290831,
+    "expense_volatility": 0.9511139043948811,
+    "spending_trend_slope": 0.0003490408970439898,
+    "income_irregularity_score": 0.00015014049106985546,
+    "expense_to_income_ratio": 0.014876898775676606
+  },
+  "test_accuracy": 0.9972,
+  "cv_mean": 0.9972,
+  "cv_std": 0.003,
+  "model_type": "GradientBoostingClassifier"
+}
