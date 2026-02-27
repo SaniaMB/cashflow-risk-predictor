@@ -40,15 +40,39 @@ public class RiskPredictionService {
         MonthlyFinancialSummary summary =
                 featureService.computeMonthlySummary(userId, month);
 
-        // 2️⃣ Build ML request
-        RiskRequestDTO request = new RiskRequestDTO();
-        request.setSavingsRatio(summary.getSavingsRatio().doubleValue());
-        request.setEmiRatio(summary.getEmiRatio().doubleValue());
-        request.setExpenseVolatility(summary.getExpenseVolatility().doubleValue());
-        request.setSpendingTrendSlope(summary.getSpendingTrendSlope().doubleValue());
-        request.setIncomeIrregularityScore(summary.getIncomeIrregularityScore().doubleValue());
+        // 2️⃣ Get user
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
-        // 3️⃣ Call ML service
+        // 3️⃣ Build ML request (NEW STRUCTURE)
+        RiskRequestDTO request = new RiskRequestDTO();
+        request.setUserId(userId);
+        request.setMonth(month.toString());
+
+        RiskRequestDTO.FinancialFeatures features =
+                new RiskRequestDTO.FinancialFeatures();
+
+        features.setSavingsRatio(summary.getSavingsRatio().doubleValue());
+        features.setEmiRatio(summary.getEmiRatio().doubleValue());
+        features.setExpenseVolatility(summary.getExpenseVolatility().doubleValue());
+        features.setSpendingTrendSlope(summary.getSpendingTrendSlope().doubleValue());
+        features.setIncomeIrregularityScore(summary.getIncomeIrregularityScore().doubleValue());
+
+        // compute expense_to_income_ratio dynamically
+        double expenseToIncomeRatio = 0.0;
+
+        if (summary.getTotalIncome().compareTo(BigDecimal.ZERO) > 0) {
+            expenseToIncomeRatio =
+                    summary.getTotalExpense()
+                            .divide(summary.getTotalIncome(), 4, java.math.RoundingMode.HALF_UP)
+                            .doubleValue();
+        }
+
+        features.setExpenseToIncomeRatio(expenseToIncomeRatio);
+
+        request.setFeatures(features);
+
+        // 4️⃣ Call ML
         RiskResponseDTO response = webClient.post()
                 .uri("http://localhost:8000/predict")
                 .bodyValue(request)
@@ -59,10 +83,6 @@ public class RiskPredictionService {
         if (response == null) {
             throw new RuntimeException("ML service did not respond");
         }
-
-        // 4️⃣ Get user
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
 
         // 5️⃣ Get or create RiskScore
         RiskScore risk = riskRepository
@@ -89,7 +109,6 @@ public class RiskPredictionService {
                 BigDecimal.valueOf(response.getConfidence())
         );
 
-        // 7️⃣ Top factors
         List<String> factors = response.getTopFactors();
         if (factors != null) {
             if (factors.size() > 0) risk.setTopFactor1(factors.get(0));
@@ -97,7 +116,6 @@ public class RiskPredictionService {
             if (factors.size() > 2) risk.setTopFactor3(factors.get(2));
         }
 
-        // 8️⃣ Save and return
         return riskRepository.save(risk);
     }
 }
