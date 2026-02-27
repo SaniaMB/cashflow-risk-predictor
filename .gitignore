@@ -1,0 +1,13 @@
+# ===== Local configuration (DO NOT PUSH REAL PASSWORDS) =====
+backend/src/main/resources/application-local.properties
+
+# ===== IntelliJ files =====
+.idea/
+*.iml
+
+# ===== Maven build output =====
+backend/target/
+
+# ===== OS junk =====
+.DS_Store
+Thumbs.db
