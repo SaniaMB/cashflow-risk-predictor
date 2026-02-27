@@ -57,13 +57,14 @@ public class FeatureEngineeringService {
                 .map(Transaction::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        // Savings Ratio
         BigDecimal savingsRatio = BigDecimal.ZERO;
         if (totalIncome.compareTo(BigDecimal.ZERO) > 0) {
             savingsRatio = totalIncome.subtract(totalExpense)
                     .divide(totalIncome, 4, RoundingMode.HALF_UP);
         }
 
-        // EMI ratio
+        // EMI Ratio
         BigDecimal totalEmi = expenseTx.stream()
                 .filter(t -> "EMI".equalsIgnoreCase(t.getCategory()))
                 .map(Transaction::getAmount)
@@ -74,52 +75,7 @@ public class FeatureEngineeringService {
             emiRatio = totalEmi.divide(totalIncome, 4, RoundingMode.HALF_UP);
         }
 
-        // Expense volatility (std dev of daily expense)
-        Map<LocalDate, BigDecimal> dailyExpenseMap = expenseTx.stream()
-                .collect(Collectors.groupingBy(
-                        Transaction::getTransactionDate,
-                        Collectors.mapping(
-                                Transaction::getAmount,
-                                Collectors.reducing(BigDecimal.ZERO, BigDecimal::add)
-                        )
-                ));
-
-        double volatility = calculateStandardDeviation(
-                dailyExpenseMap.values().stream()
-                        .map(BigDecimal::doubleValue)
-                        .toList()
-        );
-
-        BigDecimal expenseVolatility =
-                BigDecimal.valueOf(volatility).setScale(4, RoundingMode.HALF_UP);
-
-        // Spending trend (first half vs second half)
-        int midDay = startDate.lengthOfMonth() / 2;
-
-        BigDecimal firstHalfExpense = expenseTx.stream()
-                .filter(t -> t.getTransactionDate().getDayOfMonth() <= midDay)
-                .map(Transaction::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        BigDecimal secondHalfExpense = expenseTx.stream()
-                .filter(t -> t.getTransactionDate().getDayOfMonth() > midDay)
-                .map(Transaction::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        BigDecimal spendingTrendSlope = secondHalfExpense.subtract(firstHalfExpense)
-                .setScale(4, RoundingMode.HALF_UP);
-
-        // Income irregularity (std dev of income)
-        double incomeStd = calculateStandardDeviation(
-                incomeTx.stream()
-                        .map(t -> t.getAmount().doubleValue())
-                        .toList()
-        );
-
-        BigDecimal incomeIrregularity =
-                BigDecimal.valueOf(incomeStd).setScale(4, RoundingMode.HALF_UP);
-
-        // Save or update
+        // Save or update current month first (needed for multi-month calculations)
         MonthlyFinancialSummary summary =
                 summaryRepository.findByUserIdAndMonth(userId, month)
                         .orElse(new MonthlyFinancialSummary());
@@ -130,6 +86,71 @@ public class FeatureEngineeringService {
         summary.setTotalExpense(totalExpense);
         summary.setSavingsRatio(savingsRatio);
         summary.setEmiRatio(emiRatio);
+
+        summaryRepository.save(summary);
+
+        // ---------------- MULTI-MONTH FEATURES ----------------
+
+        LocalDate sixMonthsAgo = month.minusMonths(5);
+
+        List<MonthlyFinancialSummary> pastSummaries =
+                summaryRepository.findByUserIdAndMonthBetween(
+                                userId,
+                                sixMonthsAgo,
+                                month
+                        ).stream()
+                        .sorted(Comparator.comparing(MonthlyFinancialSummary::getMonth))
+                        .toList();
+
+        List<Double> monthlyExpenses = pastSummaries.stream()
+                .map(s -> s.getTotalExpense() != null ? s.getTotalExpense().doubleValue() : 0.0)
+                .toList();
+
+        List<Double> monthlyIncome = pastSummaries.stream()
+                .map(s -> s.getTotalIncome() != null ? s.getTotalIncome().doubleValue() : 0.0)
+                .toList();
+
+        // Expense Volatility (normalized std dev)
+        double expenseStd = calculateStandardDeviation(monthlyExpenses);
+        double meanExpense = monthlyExpenses.stream()
+                .mapToDouble(Double::doubleValue)
+                .average()
+                .orElse(0.0);
+
+        double normalizedVolatility =
+                meanExpense == 0 ? 0.0 : expenseStd / meanExpense;
+
+        BigDecimal expenseVolatility =
+                BigDecimal.valueOf(normalizedVolatility)
+                        .setScale(4, RoundingMode.HALF_UP);
+
+        // Spending Trend (net change across months)
+        double spendingTrend = 0.0;
+        if (monthlyExpenses.size() >= 2) {
+            spendingTrend =
+                    monthlyExpenses.get(monthlyExpenses.size() - 1)
+                            - monthlyExpenses.get(0);
+        }
+
+        BigDecimal spendingTrendSlope =
+                BigDecimal.valueOf(spendingTrend)
+                        .setScale(4, RoundingMode.HALF_UP);
+
+        // Income Irregularity (normalized std dev)
+        double incomeStd = calculateStandardDeviation(monthlyIncome);
+        double meanIncome = monthlyIncome.stream()
+                .mapToDouble(Double::doubleValue)
+                .average()
+                .orElse(0.0);
+
+        double normalizedIncomeIrregularity =
+                meanIncome == 0 ? 0.0 : incomeStd / meanIncome;
+
+        BigDecimal incomeIrregularity =
+                BigDecimal.valueOf(normalizedIncomeIrregularity)
+                        .setScale(4, RoundingMode.HALF_UP);
+
+        // Update summary
         summary.setExpenseVolatility(expenseVolatility);
         summary.setSpendingTrendSlope(spendingTrendSlope);
         summary.setIncomeIrregularityScore(incomeIrregularity);
@@ -138,7 +159,7 @@ public class FeatureEngineeringService {
     }
 
     private double calculateStandardDeviation(List<Double> values) {
-        if (values.isEmpty()) return 0.0;
+        if (values.size() < 2) return 0.0;
 
         double mean = values.stream()
                 .mapToDouble(Double::doubleValue)
