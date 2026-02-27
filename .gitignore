@@ -11,3 +11,13 @@ backend/target/
 # ===== OS junk =====
 .DS_Store
 Thumbs.db
+
+# Python
+ml/venv/
+ml/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Trained model artifacts
+ml/model/*.pkl
+ml/model/*.json
